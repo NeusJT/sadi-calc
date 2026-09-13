@@ -23,8 +23,17 @@ jobs:
           pip install --upgrade pip
           pip install --upgrade buildozer cython
 
+      - name: Preinstall Android Build Tools (Fix Aidl)
+        run: |
+          # Aceitar licenças SDK do Android e instalar build-tools-33.0.0 se necessário
+          mkdir -p ~/.buildozer/android/platform/android-sdk/cmdline-tools
+          export ANDROIDSDK="$HOME/.buildozer/android/platform/android-sdk"
+          export PATH="$ANDROIDSDK/cmdline-tools/latest/bin:$ANDROIDSDK/platform-tools:$PATH"
+          # Se o sdkmanager existir via bootstrap prévio ou se o buildozer gerir:
+          echo y | buildozer android debug || true
+
       - name: Build with Buildozer
-        run: buildozer android debug
+        run: yes | buildozer -v android debug
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
