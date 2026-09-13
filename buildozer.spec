@@ -16,6 +16,9 @@ android.accept_sdk_license = True
 android.ndk = 25b
 android.build_tools_version = 33.0.0
 
+# Add this section to pin pip and setuptools versions
+p4a.pip_dependencies = pip==23.3.2,setuptools==69.0.3
+
 [buildozer]
 log_level = 2
 warn_on_root = 1
