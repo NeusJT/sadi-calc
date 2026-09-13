@@ -1,3 +1,5 @@
+import math
+import re
 from kivy.app import App
 from kivy.uix.screenmanager import ScreenManager, Screen, SlideTransition
 from kivy.uix.boxlayout import BoxLayout
@@ -7,6 +9,8 @@ from kivy.uix.label import Label
 from kivy.uix.textinput import TextInput
 from kivy.uix.spinner import Spinner
 from kivy.uix.button import Button
+from kivy.uix.widget import Widget
+from kivy.graphics import Color, Line, Ellipse, Rectangle
 from kivy.core.window import Window
 from engine import CompartmentEngine
 
@@ -29,6 +33,70 @@ class CardLabel(Label):
             self.height = value[1] + 20
         else:
             self.height = 140
+
+
+class SadiPreviewWidget(Widget):
+    def __init__(self, room_l: float, room_w: float, qtd: int, distrib_str: str = "", **kwargs):
+        super().__init__(**kwargs)
+        self.room_l = max(float(room_l or 1.0), 1.0)
+        self.room_w = max(float(room_w or 1.0), 1.0)
+        self.qtd = max(int(qtd or 0), 0)
+        self.distrib_str = distrib_str
+        self.size_hint_y = None
+        self.height = 180
+        self.bind(pos=self.redraw, size=self.redraw)
+
+    def _get_grid_dims(self):
+        # Tenta extrair explicitamente o padrão "AxB" (ex: 3x2, 6x3) do texto de distribuição
+        if self.distrib_str:
+            match = re.search(r'(\d+)\s*[xX]\s*(\d+)', self.distrib_str)
+            if match:
+                c, r = int(match.group(1)), int(match.group(2))
+                return c, r
+        # Fallback proporcional caso o texto não contenha matriz explícita
+        cols = max(1, round(math.sqrt(self.qtd * (self.room_l / self.room_w))))
+        rows = max(1, math.ceil(self.qtd / cols))
+        return cols, rows
+
+    def redraw(self, *args):
+        self.canvas.clear()
+        with self.canvas:
+            margin = 25
+            avail_w = max(self.width - 2 * margin, 50)
+            avail_h = max(self.height - 2 * margin, 50)
+            
+            scale = min(avail_w / self.room_l, avail_h / self.room_w)
+            draw_w = self.room_l * scale
+            draw_h = self.room_w * scale
+            
+            offset_x = self.x + (self.width - draw_w) / 2
+            offset_y = self.y + (self.height - draw_h) / 2
+            
+            # Fundo subtil da sala
+            Color(0.12, 0.14, 0.18, 1)
+            Rectangle(pos=(offset_x, offset_y), size=(draw_w, draw_h))
+            
+            # Contorno do compartimento
+            Color(0.4, 0.5, 0.6, 1)
+            Line(rectangle=(offset_x, offset_y, draw_w, draw_h), width=1.5)
+            
+            # Desenhar pontos de detetores alinhados com a grelha exata
+            if self.qtd > 0:
+                cols, rows = self._get_grid_dims()
+                Color(0.18, 0.8, 0.44, 1)  # Verde detetor (EN 54)
+                count = 0
+                for r in range(rows):
+                    for c in range(cols):
+                        if count >= self.qtd:
+                            break
+                        # Espelhamento simétrico por célula da grelha
+                        step_x = draw_w / cols
+                        step_y = draw_h / rows
+                        px = offset_x + step_x * (c + 0.5)
+                        py = offset_y + step_y * (r + 0.5)
+                        dot_size = 10
+                        Ellipse(pos=(px - dot_size / 2, py - dot_size / 2), size=(dot_size, dot_size))
+                        count += 1
 
 
 class ScreenInput(Screen):
@@ -54,11 +122,11 @@ class ScreenInput(Screen):
             grid.add_widget(ti)
             return ti
 
-        self.in_len = add_field("Comprimento (m):", default_val="0.0")
-        self.in_wid = add_field("Largura (m):", default_val="0.0")
-        self.in_hcenter = add_field("Alt. Centro / Pico (m):", default_val="0.0")
-        self.in_hleft = add_field("Alt. Esquerda (m):", default_val="0.0")
-        self.in_hright = add_field("Alt. Direita (m):", default_val="0.0")
+        self.in_len = add_field("Comprimento (m):", default_val="25.0")
+        self.in_wid = add_field("Largura (m):", default_val="10.0")
+        self.in_hcenter = add_field("Alt. Centro / Pico (m):", default_val="8.55")
+        self.in_hleft = add_field("Alt. Esquerda (m):", default_val="6.10")
+        self.in_hright = add_field("Alt. Direita (m):", default_val="6.55")
         self.in_exits = add_field("N.º Saídas Fuga:", default_val="1", filter_type="int")
 
         form.add_widget(grid)
@@ -126,7 +194,7 @@ class ScreenInput(Screen):
                 return
 
             screen_res = self.manager.get_screen('results')
-            screen_res.show_data(res)
+            screen_res.show_data(res, dim_l=l, dim_w=w)
             self.manager.transition = SlideTransition(direction='left')
             self.manager.current = 'results'
             self.lbl_err.text = ""
@@ -157,7 +225,7 @@ class ScreenResult(Screen):
         self.manager.transition = SlideTransition(direction='right')
         self.manager.current = 'inputs'
 
-    def show_data(self, res: dict):
+    def show_data(self, res: dict, dim_l: float = 25.0, dim_w: float = 10.0):
         self.box_content.clear_widgets()
         
         mcp_data = res.get('mcp') or {}
@@ -168,17 +236,27 @@ class ScreenResult(Screen):
         )
         self.box_content.add_widget(CardLabel(text=summary))
 
+        room_l = res.get('dim_l', dim_l) or 25.0
+        room_w = res.get('dim_w', dim_w) or 10.0
+
         for idx, opt in enumerate(res.get('viable_options', []), 1):
+            distrib_txt = opt.get('distribuicao', '')
             card_txt = (
                 f"[color=2ecc71][b]OPÇÃO VIÁVEL #{idx}: {opt.get('tecnologia', '').upper()}[/b][/color]\n"
                 f"• [b]Viabilidade Técnica:[/b] {opt.get('viabilidade', '')}\n"
                 f"• [b]Quantidade / Escopo:[/b] [size=15][b]{opt.get('qtd', 0)} un. / blocos[/b][/size]\n"
-                f"• [b]Distribuição / Geometria:[/b] {opt.get('distribuicao', '')}\n"
+                f"• [b]Distribuição / Geometria:[/b] {distrib_txt}\n"
                 f"• [b]Posição 1.º Ponto:[/b] {opt.get('primeiro_ponto', '')}\n"
                 f"• [b]Passo / Espaçamento:[/b] {opt.get('espacamento', '')}\n"
                 f"• [b]Regras / Cumeeira:[/b] [i]{opt.get('regras_geometria', '')}[/i]"
             )
             self.box_content.add_widget(CardLabel(text=card_txt))
+            self.box_content.add_widget(SadiPreviewWidget(
+                room_l=room_l, 
+                room_w=room_w, 
+                qtd=opt.get('qtd', 0),
+                distrib_str=distrib_txt
+            ))
         
         self.box_content.add_widget(Label(
             text="[size=10]SADI v1.0 — Jhonny Tavares[/size]",
