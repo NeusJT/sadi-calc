@@ -36,32 +36,43 @@ class CardLabel(Label):
 
 
 class SadiPreviewWidget(Widget):
-    def __init__(self, room_l: float, room_w: float, qtd: int, distrib_str: str = "", **kwargs):
+    def __init__(self, room_l: float, room_w: float, qtd: int, distrib_str: str = "", espacamento_str: str = "", **kwargs):
         super().__init__(**kwargs)
         self.room_l = max(float(room_l or 1.0), 1.0)
         self.room_w = max(float(room_w or 1.0), 1.0)
         self.qtd = max(int(qtd or 0), 0)
         self.distrib_str = distrib_str
+        self.espacamento_str = espacamento_str
         self.size_hint_y = None
-        self.height = 180
+        self.height = 200
         self.bind(pos=self.redraw, size=self.redraw)
 
     def _get_grid_dims(self):
-        # Tenta extrair explicitamente o padrão "AxB" (ex: 3x2, 6x3) do texto de distribuição
         if self.distrib_str:
             match = re.search(r'(\d+)\s*[xX]\s*(\d+)', self.distrib_str)
             if match:
                 c, r = int(match.group(1)), int(match.group(2))
                 return c, r
-        # Fallback proporcional caso o texto não contenha matriz explícita
         cols = max(1, round(math.sqrt(self.qtd * (self.room_l / self.room_w))))
         rows = max(1, math.ceil(self.qtd / cols))
         return cols, rows
 
+    def _get_coverage_radius_meters(self):
+        # Tenta extrair o passo/espaçamento em metros (ex: 8.33 m x 5.0 m)
+        if self.espacamento_str:
+            matches = re.findall(r'(\d+(?:\.\d+)?)', self.espacamento_str)
+            if len(matches) >= 2:
+                sx = float(matches[0])
+                sy = float(matches[1])
+                # Raio de cobertura efetivo aproximado da diagonal/passo da célula (EN 54)
+                return max(sx, sy) * 0.707
+        # Fallback padrão EN 54 (ex: raio óculo ~7.5m ou proporcional)
+        return min(7.5, (self.room_l * self.room_w)**0.5 / 2.5)
+
     def redraw(self, *args):
         self.canvas.clear()
         with self.canvas:
-            margin = 25
+            margin = 30
             avail_w = max(self.width - 2 * margin, 50)
             avail_h = max(self.height - 2 * margin, 50)
             
@@ -80,23 +91,40 @@ class SadiPreviewWidget(Widget):
             Color(0.4, 0.5, 0.6, 1)
             Line(rectangle=(offset_x, offset_y, draw_w, draw_h), width=1.5)
             
-            # Desenhar pontos de detetores alinhados com a grelha exata
             if self.qtd > 0:
                 cols, rows = self._get_grid_dims()
-                Color(0.18, 0.8, 0.44, 1)  # Verde detetor (EN 54)
+                cov_radius_m = self._get_coverage_radius_meters()
+                cov_radius_px = cov_radius_m * scale
+                
+                step_x = draw_w / cols
+                step_y = draw_h / rows
+                
                 count = 0
+                points_coords = []
                 for r in range(rows):
                     for c in range(cols):
                         if count >= self.qtd:
                             break
-                        # Espelhamento simétrico por célula da grelha
-                        step_x = draw_w / cols
-                        step_y = draw_h / rows
                         px = offset_x + step_x * (c + 0.5)
                         py = offset_y + step_y * (r + 0.5)
-                        dot_size = 10
-                        Ellipse(pos=(px - dot_size / 2, py - dot_size / 2), size=(dot_size, dot_size))
+                        points_coords.append((px, py))
                         count += 1
+
+                # 1. Desenhar a área de cobertura teórica (círculo semi-transparente + contorno suave)
+                for (px, py) in points_coords:
+                    # Preenchimento translúcido da área de cobertura
+                    Color(0.18, 0.8, 0.44, 0.14)
+                    Ellipse(pos=(px - cov_radius_px, py - cov_radius_px), size=(cov_radius_px * 2, cov_radius_px * 2))
+                    
+                    # Linha de contorno do raio de cobertura
+                    Color(0.18, 0.8, 0.44, 0.35)
+                    Line(circle=(px, py, cov_radius_px), width=1)
+
+                # 2. Desenhar o centro do detetor por cima
+                for (px, py) in points_coords:
+                    Color(0.18, 0.9, 0.5, 1)
+                    dot_size = 10
+                    Ellipse(pos=(px - dot_size / 2, py - dot_size / 2), size=(dot_size, dot_size))
 
 
 class ScreenInput(Screen):
@@ -241,13 +269,14 @@ class ScreenResult(Screen):
 
         for idx, opt in enumerate(res.get('viable_options', []), 1):
             distrib_txt = opt.get('distribuicao', '')
+            espacamento_txt = opt.get('espacamento', '')
             card_txt = (
                 f"[color=2ecc71][b]OPÇÃO VIÁVEL #{idx}: {opt.get('tecnologia', '').upper()}[/b][/color]\n"
                 f"• [b]Viabilidade Técnica:[/b] {opt.get('viabilidade', '')}\n"
                 f"• [b]Quantidade / Escopo:[/b] [size=15][b]{opt.get('qtd', 0)} un. / blocos[/b][/size]\n"
                 f"• [b]Distribuição / Geometria:[/b] {distrib_txt}\n"
                 f"• [b]Posição 1.º Ponto:[/b] {opt.get('primeiro_ponto', '')}\n"
-                f"• [b]Passo / Espaçamento:[/b] {opt.get('espacamento', '')}\n"
+                f"• [b]Passo / Espaçamento:[/b] {espacamento_txt}\n"
                 f"• [b]Regras / Cumeeira:[/b] [i]{opt.get('regras_geometria', '')}[/i]"
             )
             self.box_content.add_widget(CardLabel(text=card_txt))
@@ -255,7 +284,8 @@ class ScreenResult(Screen):
                 room_l=room_l, 
                 room_w=room_w, 
                 qtd=opt.get('qtd', 0),
-                distrib_str=distrib_txt
+                distrib_str=distrib_txt,
+                espacamento_str=espacamento_txt
             ))
         
         self.box_content.add_widget(Label(
