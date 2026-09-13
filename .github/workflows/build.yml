@@ -23,18 +23,10 @@ jobs:
           pip install --upgrade pip
           pip install --upgrade buildozer cython
 
-      - name: Preinstall Android Build Tools (Fix Aidl)
-        run: |
-          mkdir -p ~/.buildozer/android/platform/android-sdk/cmdline-tools
-          export ANDROIDSDK="$HOME/.buildozer/android/platform/android-sdk"
-          export PATH="$ANDROIDSDK/cmdline-tools/latest/bin:$ANDROIDSDK/platform-tools:$PATH"
-          mkdir -p ~/.android
-          echo "" | android create avd --force -n test -t android-21 2>/dev/null || true
-          yes | sdkmanager --licenses 2>/dev/null || true
-          yes | buildozer android debug --require-package --no-build 2>&1 || true
-
       - name: Build with Buildozer
-        run: yes | buildozer -v android debug
+        run: |
+          export ANDROID_SDK_ROOT=$HOME/.buildozer/android/platform/android-sdk
+          yes | buildozer android debug 2>&1
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
