@@ -25,12 +25,13 @@ jobs:
 
       - name: Preinstall Android Build Tools (Fix Aidl)
         run: |
-          # Aceitar licenças SDK do Android e instalar build-tools-33.0.0 se necessário
           mkdir -p ~/.buildozer/android/platform/android-sdk/cmdline-tools
           export ANDROIDSDK="$HOME/.buildozer/android/platform/android-sdk"
           export PATH="$ANDROIDSDK/cmdline-tools/latest/bin:$ANDROIDSDK/platform-tools:$PATH"
-          # Se o sdkmanager existir via bootstrap prévio ou se o buildozer gerir:
-          echo y | buildozer android debug || true
+          mkdir -p ~/.android
+          echo "" | android create avd --force -n test -t android-21 2>/dev/null || true
+          yes | sdkmanager --licenses 2>/dev/null || true
+          yes | buildozer android debug --require-package --no-build 2>&1 || true
 
       - name: Build with Buildozer
         run: yes | buildozer -v android debug
